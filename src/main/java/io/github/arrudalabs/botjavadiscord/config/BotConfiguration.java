@@ -1,27 +1,26 @@
 package io.github.arrudalabs.botjavadiscord.config;
 
+import io.github.arrudalabs.botjavadiscord.listeners.HelloSlashCommandListener;
+import io.github.arrudalabs.botjavadiscord.listeners.MessageListener;
+import io.github.arrudalabs.botjavadiscord.listeners.ReadyListener;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
-import net.dv8tion.jda.api.entities.ChannelType;
-import net.dv8tion.jda.api.entities.Message;
-import net.dv8tion.jda.api.entities.MessageChannel;
-import net.dv8tion.jda.api.events.GenericEvent;
-import net.dv8tion.jda.api.events.ReadyEvent;
-import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
-import net.dv8tion.jda.api.hooks.EventListener;
-import net.dv8tion.jda.api.hooks.ListenerAdapter;
+import net.dv8tion.jda.api.interactions.commands.OptionType;
+import net.dv8tion.jda.api.interactions.commands.build.CommandData;
+import net.dv8tion.jda.api.interactions.commands.build.OptionData;
+import net.dv8tion.jda.api.requests.GatewayIntent;
+import net.dv8tion.jda.api.requests.restaction.CommandListUpdateAction;
 import net.dv8tion.jda.api.utils.MemberCachePolicy;
 import net.dv8tion.jda.api.utils.cache.CacheFlag;
-import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.context.event.ApplicationStartedEvent;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
 
 import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
 import javax.security.auth.login.LoginException;
+import java.util.EnumSet;
 
 @Configuration
 public class BotConfiguration {
@@ -29,70 +28,69 @@ public class BotConfiguration {
     private static Logger logger = LoggerFactory.getLogger(BotConfiguration.class);
 
     private final String token;
+    private final HelloSlashCommandListener helloSlashCommandListener;
     private JDA jda;
 
-    public BotConfiguration(Environment environment) {
+    public BotConfiguration(Environment environment, HelloSlashCommandListener helloSlashCommandListener) {
         this.token = environment.getProperty("BOT_TOKEN", "");
+        this.helloSlashCommandListener = helloSlashCommandListener;
     }
 
     @PostConstruct
-    public void start() throws LoginException {
+    public void start() throws LoginException, InterruptedException {
+        createJDA();
+        addListeners();
+        addCommands();
+        // optionally block until JDA is ready
+        jda.awaitReady();
+    }
 
-        JDABuilder builder = JDABuilder.createDefault(token);
+    private void addCommands() {
 
-        // Disable cache for member activities (streaming/games/spotify)
-        builder.disableCache(CacheFlag.ACTIVITY);
+        // These commands take up to an hour to be activated after creation/update/delete
+        CommandListUpdateAction commands = jda.updateCommands();
 
-        // Only cache members who are either in a voice channel or owner of the guild
-        builder.setMemberCachePolicy(MemberCachePolicy.VOICE.or(MemberCachePolicy.OWNER));
+//        /hello who: Max
+//        → Hi Max!
+        commands.addCommands(
+                new CommandData("hello", "Comando para teste")
+                        .addOptions(
+                                new OptionData(
+                                        OptionType.STRING,
+                                        "who",
+                                        "Informe um nome?")
+                                        .setRequired(true)
+                        )
+        );
 
-        this.jda = builder.build();
+        //        /quem-sou
+        //        → @Maximillian
+        commands.addCommands(
+                new CommandData("quem-sou", "Exibe vc")
+        );
+        // Send the new set of commands to discord, this will override any existing global commands with the new set provided here
+        commands.queue();
+    }
+
+    private void addListeners() {
         jda.addEventListener(new ReadyListener());
-        jda.addEventListener(new MessageListener());
+        //jda.addEventListener(new MessageListener());
+        jda.addEventListener(helloSlashCommandListener);
+    }
+
+    private void createJDA() throws LoginException {
+        JDABuilder builder = JDABuilder
+                .createLight(token, EnumSet.noneOf(GatewayIntent.class))
+                // slash commands don't need any intents
+                ;
+        this.jda = builder.build();
     }
 
 
     @PreDestroy
-    public void onShutdown(){
+    public void onShutdown() {
         jda.shutdownNow();
     }
 
-    class ReadyListener implements EventListener {
-
-        @Override
-        public void onEvent(@NotNull GenericEvent event) {
-            if (event instanceof ReadyEvent)
-                System.out.println("API is ready!");
-        }
-    }
-
-    class MessageListener extends ListenerAdapter{
-        @Override
-        public void onMessageReceived(MessageReceivedEvent event)
-        {
-            if (event.isFromType(ChannelType.PRIVATE))
-            {
-                logger.info(String.format("[PM] %s: %s", event.getAuthor().getName(),
-                        event.getMessage().getContentDisplay()));
-            }
-            else
-            {
-                logger.info(String.format("[%s][%s] %s: %s", event.getGuild().getName(),
-                        event.getTextChannel().getName(), event.getMember().getEffectiveName(),
-                        event.getMessage().getContentDisplay()));
-            }
-
-            Message msg = event.getMessage();
-            if (msg.getContentRaw().equals("!ping"))
-            {
-                MessageChannel channel = event.getChannel();
-                long time = System.currentTimeMillis();
-                channel.sendMessage("Pong!") /* => RestAction<Message> */
-                        .queue(response /* => Message */ -> {
-                            response.editMessageFormat("Pong: %d ms", System.currentTimeMillis() - time).queue();
-                        });
-            }
-        }
-    }
 
 }
